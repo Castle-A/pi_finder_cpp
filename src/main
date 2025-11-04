@@ -1,0 +1,129 @@
+#include <iostream>
+#include <string>
+#include <mpfr.h>
+#include "kmp.hpp"
+#include "util.hpp"
+
+// Convert digits -> bits (precision)
+static inline mpfr_prec_t bits_for_digits(size_t ndigits){
+    const double LOG2_10 = 3.3219280948873626;
+    return (mpfr_prec_t)(ndigits * LOG2_10) + 64; // margin
+}
+
+// Return "3.<ndigits>"
+std::string pi_decimal_string(size_t ndigits){
+    mpfr_prec_t prec = bits_for_digits(ndigits + 5);
+    mpfr_t pi; mpfr_init2(pi, prec);
+    mpfr_const_pi(pi, MPFR_RNDN);
+
+    char* str = nullptr; long exp10 = 0;
+    // ndigits+1 to ensure we can cut exactly
+    mpfr_get_str(&str, &exp10, 10, (mpfr_prec_t)(ndigits+1), pi, MPFR_RNDN);
+
+    std::string mant(str ? str : "");
+    mpfr_free_str(str);
+    mpfr_clear(pi);
+
+    if (mant.size() < ndigits+1) mant.append(ndigits+1 - mant.size(), '0');
+    std::string out; out.reserve(ndigits+2);
+    out.push_back(mant[0]);
+    out.push_back('.');
+    out.append(mant.begin()+1, mant.begin()+1+ndigits);
+    return out;
+}
+
+struct Result { bool found; size_t pos; std::string before, mid, after; };
+
+static std::string format_context(const std::string& before, const std::string& mid, const std::string& after){
+    std::string before4 = (before.size() > 4) ? before.substr(before.size() - 4) : before;
+    std::string after4  = (after.size()  > 4) ? after.substr(0, 4)                : after;
+    return "..." + before4 + " [" + mid + "] " + after4 + "...";
+}
+
+Result find_in_pi(const std::string& digits, size_t nd){
+    std::string pi = pi_decimal_string(nd); // "3.xxxxx"
+    auto dot = pi.find('.');
+    std::string dec = (dot==std::string::npos) ? pi : pi.substr(dot+1);
+
+    KMP kmp(digits);
+    long long idx = kmp.search_first(dec);
+    if (idx < 0) return {false, 0, {}, {}, {}};
+
+    size_t pos = (size_t)idx + 1; // 1-indexed
+    size_t start = (idx >= 20) ? (size_t)idx - 20 : 0;
+    size_t end = std::min(dec.size(), (size_t)idx + digits.size() + 20);
+    return {true, dec.substr(start, (size_t)idx - start), digits,
+            dec.substr((size_t)idx + digits.size(), end - ((size_t)idx + digits.size())) ,};
+}
+
+static void print_intro(){
+    std::cout << "\n👋 Hallo!\n";
+    std::cout << "π (Pi) hat unendliche, nicht periodische Dezimalstellen (irrational).\n";
+    std::cout << "Viele vermuten, dass jede endliche Ziffernfolge in π vorkommt (Normalität),\n";
+    std::cout << "aber das ist nicht bewiesen. Wir suchen in einem großen Präfix von π.\n\n";
+}
+
+int main(){
+    print_intro();
+
+    std::cout << "Wähle:\n  1) Ziffernfolge suchen\n  2) Geburtsdatum suchen (Format: 23041992)\nDeine Wahl (1/2): ";
+    std::string choice; std::getline(std::cin, choice); choice = util::trim(choice);
+
+    std::string query;
+    bool isBirthday = (choice == "2");
+    if (isBirthday){
+        std::cout << "Gib dein Geburtsdatum ein (z.B. 23/04/1992 oder 23041992): ";
+        std::string raw; std::getline(std::cin, raw);
+        query = util::only_digits(raw);   // accepte 23/04/1992 -> 23041992
+        if (query.size() < 4){
+            std::cerr << "Format zu kurz. Gebe eine Ziffernfolge ein: ";
+            std::getline(std::cin, query);
+            query = util::only_digits(query);
+        } else {
+            std::cout << "→ Interpretiert als: " << query << "\n";
+        }
+    } else {
+        std::cout << "Ziffernfolge eingeben (z.B. 314159): ";
+        std::getline(std::cin, query);
+        query = util::only_digits(query);
+        if (query.empty()){
+            std::cerr << "Keine Ziffern. Abbruch.\n";
+            return 1;
+        }
+    }
+
+    const size_t defaultN = 100000;
+    std::cout << "Wieviele Dezimalstellen von π berechnen? (Standard: " << util::nice_int(defaultN) << ")\n";
+    std::cout << "Je größer N ist, desto länger dauert es.\nN (>=1000) oder Enter: ";
+    std::string nraw; std::getline(std::cin, nraw); nraw = util::trim(nraw);
+    size_t nd = defaultN;
+    if (!nraw.empty()){
+        try{
+            nd = std::stoull(nraw);
+            if (nd < 1000){ std::cout << "Auf 1000 angepasst.\n"; nd = 1000; }
+        } catch(...){
+            std::cout << "Ungültig, Standard wird verwendet.\n";
+        }
+    }
+
+    std::cout << "\n⏳ Berechne π bis " << util::nice_int(nd) << " Dezimalstellen...\n";
+    auto res = find_in_pi(query, nd);
+
+    if (!res.found){
+        std::cout << "\n🔎 Die " << (isBirthday ? "Geburtsdatum-Sequenz" : "Ziffernfolge")
+                  << " \"" << query << "\" wurde in den ersten "
+                  << util::nice_int(nd) << " Dezimalstellen von π nicht gefunden.\n";
+        std::cout << "Erhöhe N oder probiere eine andere Folge.\n";
+        std::cout << "\nℹ Hinweis: Wir durchsuchen nur ein Präfix von π; Normalität ist unbewiesen.\n";
+        return 0;
+    }
+
+    std::cout << "\n✅ Die " << (isBirthday ? "Geburtsdatum-Sequenz" : "Ziffernfolge")
+              << " \"" << query << "\" erscheint an Position "
+              << util::nice_int(res.pos) << " der Dezimalstellen von π (nach dem 3.).\n";
+
+    std::cout << "Kontext:\n" << format_context(res.before, res.mid, res.after) << "\n\n";
+    std::cout << "ℹ Hinweis: Dieses Programm sucht in einem Präfix von π; die Behauptung,\n";
+    std::cout << "dass alle endlichen Folgen in π vorkommen, ist nicht bewiesen.\n";
+    return 0;
+}

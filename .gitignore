@@ -1,0 +1,13 @@
+/build/
+/.cache/
+/.vscode/
+/vs/
+/.vs/
+.DS_Store
+*.exe
+*.obj
+*.pdb
+*.ipch
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
